@@ -1,0 +1,161 @@
+# JSON-схемы API кредитного конвейера — кейс 2
+#
+# Как заполнять:
+#   1. Не меняй schemas Application (образец).
+#   2. Заполни Decision, ExternalRequest, Error.
+#   3. Проверь: файл должен валидироваться на https://www.jsonschemavalidator.net/
+
+openapi: 3.0.3
+info:
+  title: Fin-Tech Credit Conveyor
+  version: "1.0.0"
+  description: Приём заявки, эмуляция БКИ/СМЭВ, скоринг, предварительное решение
+
+servers:
+  - url: http://localhost:8082
+
+# ---------- ОБРАЗЕЦ: Application, не трогать ----------
+components:
+  schemas:
+    Application:
+      type: object
+      required: [app_id, age, income, employment, family, amount, term]
+      additionalProperties: false
+      properties:
+        app_id: {type: string, pattern: '^app_[0-9]{4}$'}
+        client_id: {type: string, pattern: '^cli_[0-9]{4}$'}
+        passport_hash: {type: string, pattern: '^[a-f0-9]{16}$'}
+        age: {type: integer, minimum: 18, maximum: 70}
+        income: {type: number, exclusiveMinimum: 0}
+        employment:
+          enum: [employed, self-employed, student, retired, unemployed]
+        family:
+          enum: [single, married, children]
+        amount: {type: number, minimum: 10000, maximum: 5000000}
+        term: {type: integer, minimum: 3, maximum: 60}
+
+# ---------- TODO: заполни эти схемы ----------
+    Decision:
+      type: object
+      required: [app_id, decision, reason, score, dti]
+      properties:
+        app_id: {type: string, pattern: '^app_[0-9]{4}$'}
+        decision: {type: string, enum: [APPROVED, REFUSED, NEED_MORE_DATA, MANUAL_REVIEW]}
+        reason: {type: string}
+        score: {type: integer, minimum: 0, maximum: 100}
+        dti: {type: number, minimum: 0}
+        amount_approved: {type: number, nullable: true}
+        term_approved: {type: integer, nullable: true}
+        rate: {type: number, nullable: true}
+        bki:
+          type: object
+          properties:
+            score: {type: integer}
+            delinquency: {type: boolean}
+          smev: {type: string, enum: [MATCH, MISMATCH, TIMEOUT, NOT_CALLED]}
+
+    ExternalRequest:
+      type: object
+      required: [request_id, service, status, latency_ms]
+      properties:
+        request_id: {type: string}
+        service:{type: string, enum: [BKI, SMEV]}
+        status: {type: string, enum: [SUCCESS, TIMEOUT, ERROR]}
+        latency_ms: {type: integer}
+        result: {type: object}
+
+    Error:
+      type: object
+      required: [error_code, message]
+      properties:
+        error_code: {type: string}
+        message: {type: string}
+        retryable: {type: boolean}
+        details: {type: object, items: {type: string}}
+
+# ---------- paths ----------
+paths:
+  # ---------- ОБРАЗЕЦ: health ----------
+  /health:
+    get:
+      summary: Проверка живости
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: {type: object, properties: {status: {type: string}}}
+
+  # ---------- TODO: подача заявки ----------
+  /api/v1/applications:
+    post:
+      summary: Подать новую заявку
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Application'
+      responses:
+        '201':
+          description: Заявка принята в обработку
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  app_id: {type: string}
+                  status: {type: string}
+        '422':
+          description: Ошибка валидации
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Конфликт дублирующейся заявки
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # ---------- TODO: решение по заявке ----------
+  /api/v1/applications/{id}/decision:
+    get:
+      summary: Получение предварительного решения по заявке
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: Предварительное решение сформировано
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Decision'
+        '404':
+          description: Заявка не найдена
+        '425':
+          description: Заявка находится в обработке (ещё считается)
+      
+
+  # ---------- TODO: пересчёт (опционально) ----------
+  /api/v1/applications/{id}/recalculate:
+    post:
+      summary: Пересчет решения по заявке андеррайтером
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: Решение успешно пересчитано
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Decision'
+        '409':
+          description: Пересчет невозможен для закрытой заявки
